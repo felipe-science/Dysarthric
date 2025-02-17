@@ -1,0 +1,170 @@
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import warnings
+import numpy as np
+import pandas as pd
+import librosa
+import librosa.display
+import scipy.signal as signal
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import confusion_matrix
+import matplotlib.pyplot as plt
+import seaborn as sns
+warnings.filterwarnings("ignore")
+
+
+import parselmouth
+from parselmouth.praat import call
+
+def extract_voice_features(audio_path):
+    # Carregar áudio
+    y, sr = librosa.load(audio_path, sr=None)
+
+    # --- MFCCs (Mel-Frequency Cepstral Coefficients) ---
+    mfccs = librosa.feature.mfcc(y=y, sr=sr, n_mfcc=13)
+    mfccs_mean = np.mean(mfccs, axis=1)
+
+    chrome = librosa.feature.chroma_stft(y=y, sr=sr).mean(axis=1)
+    contrast = librosa.feature.spectral_contrast(y=y, sr=sr).mean(axis=1)
+    zero_cros = np.array([np.mean(librosa.feature.zero_crossing_rate(y))])
+
+
+    
+    
+
+    features = np.concatenate([mfccs_mean, chrome, contrast, zero_cros])
+
+    return features
+
+
+
+
+'''
+
+df = pd.read_csv("../dataset/torgodataset_Organized/torgodataset_organized.csv")
+path_list = df['path']
+label = df['label']
+
+new_label = []
+feature_list = []
+
+N = len(path_list)
+#N = 1000
+base_path = "../dataset/torgodataset_Organized/"
+for i in range(N):
+    aux = path_list[i]
+    pht = base_path + aux[37:]
+    
+    try:
+        # Tentar carregar o arquivo de áudio
+        y, sr = librosa.load(pht, sr=None)
+        features = extract_voice_features(pht)
+        feature_list.append(features)
+        new_label.append(label[i])
+        
+
+
+    except Exception as e:
+        # Caso ocorra um erro, imprimir uma mensagem e continuar
+        print(f"Erro ao carregar o arquivo {pht}: {e}")
+        continue
+
+    if(i%500==0):
+        print(f"{round(100*(i)/N,2)}%")
+print(f"{round(100*(i+1)/N,2)}%")
+
+
+X_train = feature_list
+y_train = new_label
+
+# Dividir os dados em treino (80%) e teste (20%)
+X_train, X_test, y_train, y_test = train_test_split(X_train, y_train, test_size=0.2, random_state=42)
+
+X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
+X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
+y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
+
+
+torch.save(X_train_tensor, 'X_train_tensor.pth')
+torch.save(y_train_tensor, 'y_train_tensor.pth')
+torch.save(X_test_tensor, 'X_test_tensor.pth')
+torch.save(y_test_tensor, 'y_test_tensor.pth')
+
+
+'''
+
+
+# Carregar os tensores de volta
+X_train_tensor = torch.load('X_train_tensor.pth')
+y_train_tensor = torch.load('y_train_tensor.pth')
+X_test_tensor = torch.load('X_test_tensor.pth')
+y_test_tensor = torch.load('y_test_tensor.pth')
+
+
+# Definir o modelo (rede neural simples)
+class SimpleNN(nn.Module):
+    def __init__(self):
+        super(SimpleNN, self).__init__()
+        self.layer1 = nn.Linear(33, 64)  # Camada de entrada (33 features) para camada escondida
+        self.layer2 = nn.Linear(64, 1)   # Camada escondida para saída binária
+        self.sigmoid = nn.Sigmoid()      # Função de ativação para saída binária
+
+    def forward(self, x):
+        x = torch.relu(self.layer1(x))  # Função ReLU na camada escondida
+        x = self.sigmoid(self.layer2(x))  # Saída binária
+        return x
+
+model = SimpleNN()
+
+# Definir a função de perda e o otimizador
+criterion = nn.BCELoss()  # Binary Cross Entropy Loss
+optimizer = optim.Adam(model.parameters(), lr=0.001)
+
+# Treinamento
+epochs = 100
+for epoch in range(epochs):
+    model.train()  # Colocar o modelo em modo de treinamento
+    
+    optimizer.zero_grad()  # Zerando os gradientes do otimizador
+    
+    # Passo para frente
+    outputs = model(X_train_tensor).squeeze()  # Remover dimensões desnecessárias
+    
+    # Calcular a perda
+    loss = criterion(outputs, y_train_tensor)
+    
+    # Passo para trás (backpropagation)
+    loss.backward()
+    
+    # Atualizar os pesos
+    optimizer.step()
+    
+    # Imprimir a perda a cada 10 épocas
+    if (epoch + 1) % 10 == 0:
+        print(f'Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}')
+
+
+# Testar o modelo
+model.eval()  # Colocar o modelo em modo de avaliação
+with torch.no_grad():  # Desligar o cálculo de gradientes durante a avaliação
+    predicted = model(X_test_tensor).squeeze()  # Previsões no conjunto de teste
+    predicted_class = (predicted > 0.5).float()  # Limite de 0.5 para previsão binária
+    accuracy = (predicted_class == y_test_tensor).float().mean()  # Comparar com os rótulos de teste
+    print(f'Accuracy on Test Set: {accuracy:.4f}')
+
+
+y_test_numpy = y_test_tensor.numpy()
+predicted_class_numpy = predicted_class.numpy()
+cm = confusion_matrix(y_test_numpy, predicted_class_numpy)
+
+
+# Plotar a matriz de confusão
+plt.figure(figsize=(6, 6))
+sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False, 
+            xticklabels=['Classe 0', 'Classe 1'], yticklabels=['Classe 0', 'Classe 1'])
+plt.xlabel('Predicted')
+plt.ylabel('True')
+plt.title('Matriz de Confusão')
+plt.show()

@@ -11,11 +11,16 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
+from sklearn.utils import resample
+from imblearn.over_sampling import SMOTE
+import parselmouth
+from parselmouth.praat import call
 warnings.filterwarnings("ignore")
 
 
-import parselmouth
-from parselmouth.praat import call
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+print(device)
+
 
 def extract_voice_features(audio_path):
     # Carregar áudio
@@ -29,15 +34,9 @@ def extract_voice_features(audio_path):
     contrast = librosa.feature.spectral_contrast(y=y, sr=sr).mean(axis=1)
     zero_cros = np.array([np.mean(librosa.feature.zero_crossing_rate(y))])
 
-
-    
-    
-
     features = np.concatenate([mfccs_mean, chrome, contrast, zero_cros])
 
     return features
-
-
 
 
 '''
@@ -103,27 +102,53 @@ X_test_tensor = torch.load('X_test_tensor.pth')
 y_test_tensor = torch.load('y_test_tensor.pth')
 
 
+# Aplicar SMOTE apenas no conjunto de treinamento
+smote = SMOTE(sampling_strategy='auto', random_state=42)
+X_train_resampled, y_train_resampled = smote.fit_resample(X_train_tensor.numpy(), y_train_tensor.numpy())
+
+# Convertendo para tensores novamente
+X_train_tensor_resampled = torch.tensor(X_train_resampled, dtype=torch.float32)
+y_train_tensor_resampled = torch.tensor(y_train_resampled, dtype=torch.float32)
+
+# O conjunto de teste permanece inalterado
+X_test_tensor = torch.tensor(X_test_tensor, dtype=torch.float32)
+y_test_tensor = torch.tensor(y_test_tensor, dtype=torch.float32)
+
+
+
+X_train_tensor = X_train_tensor_resampled
+y_train_tensor = y_train_tensor_resampled
+
+
+
+
+
 # Definir o modelo (rede neural simples)
 class SimpleNN(nn.Module):
     def __init__(self):
         super(SimpleNN, self).__init__()
         self.layer1 = nn.Linear(33, 64)  # Camada de entrada (33 features) para camada escondida
-        self.layer2 = nn.Linear(64, 1)   # Camada escondida para saída binária
+        self.layer2 = nn.Linear(64, 64)  # Camada escondida 1 para camada escondida 2
+        self.layer3 = nn.Linear(64, 1)   # Camada escondida 2 para saída binária
         self.sigmoid = nn.Sigmoid()      # Função de ativação para saída binária
 
     def forward(self, x):
-        x = torch.relu(self.layer1(x))  # Função ReLU na camada escondida
-        x = self.sigmoid(self.layer2(x))  # Saída binária
+        x = torch.relu(self.layer1(x))  # Função ReLU na camada escondida 1
+        x = torch.relu(self.layer2(x))  # Função ReLU na camada escondida 2
+        x = self.sigmoid(self.layer3(x))  # Saída binária
         return x
 
 model = SimpleNN()
+
+
+los_list = []
 
 # Definir a função de perda e o otimizador
 criterion = nn.BCELoss()  # Binary Cross Entropy Loss
 optimizer = optim.Adam(model.parameters(), lr=0.001)
 
 # Treinamento
-epochs = 100
+epochs = 3000
 for epoch in range(epochs):
     model.train()  # Colocar o modelo em modo de treinamento
     
@@ -144,6 +169,9 @@ for epoch in range(epochs):
     # Imprimir a perda a cada 10 épocas
     if (epoch + 1) % 10 == 0:
         print(f'Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}')
+
+        los_list.append(loss.item())
+
 
 
 # Testar o modelo
@@ -167,4 +195,52 @@ sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', cbar=False,
 plt.xlabel('Predicted')
 plt.ylabel('True')
 plt.title('Matriz de Confusão')
+plt.savefig('confusion.png')
 plt.show()
+
+
+
+# Matriz de confusão em porcentagem
+cm_percentage = cm.astype('float') / cm.sum(axis=1)[:, np.newaxis] * 100  # Normalização para porcentagem
+
+plt.figure(figsize=(6, 6))
+sns.heatmap(cm_percentage, annot=True, fmt='.2f', cmap='Blues', cbar=False, 
+            xticklabels=['Classe 0', 'Classe 1'], yticklabels=['Classe 0', 'Classe 1'])
+plt.xlabel('Predicted')
+plt.ylabel('True')
+plt.title('Matriz de Confusão (Porcentagem)')
+plt.savefig('confusion_percent.png')
+plt.show()
+
+
+
+
+#Checando o balanceamento
+
+label = y_train_tensor.numpy()
+
+cont0 = 0
+cont1 = 1
+for i in range(len(label)):
+    if(label[i] > 0.5):
+        cont0+=1
+    if(label[i] < 0.5):
+        cont1+=1
+
+print(cont0)
+print(cont1)
+
+
+
+x_epoch = np.linspace(0,epochs,len(los_list))
+plt.plot(x_epoch, los_list)
+plt.xlabel("Epoches")
+plt.ylabel("Loss")
+plt.savefig('loss.png')
+plt.show()
+
+
+
+
+# Salvar o modelo completo (estrutura + pesos)
+torch.save(model, 'model_complete.pth')

@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dysarthric-speech"
+version = "0.1.0"
+description = "Research tools for acoustic and multifractal speech classification"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "imbalanced-learn>=0.12.3,<0.15",
+    "librosa>=0.10.2,<0.12",
+    "matplotlib>=3.8,<4",
+    "numpy>=1.26,<3",
+    "scikit-learn>=1.5,<1.9",
+    "scipy>=1.11,<2",
+    "torch>=2.6,<3",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10", "ruff>=0.9,<1"]
+
+[project.scripts]
+dysarthric-speech = "dysarthric_speech.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
